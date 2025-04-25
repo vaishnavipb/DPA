@@ -1,0 +1,677 @@
+---
+title: "Project"
+author: "Vaishnavi Papudesi Babu"
+date: "2025-04-23"
+output: pdf_document
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(data.table)
+library(caret)
+library(randomForest)
+library(e1071)
+library(xgboost)
+library(corrplot)
+library(reshape2)
+library(dplyr)
+library(kernlab)
+```
+
+# Load and Combine Datasets
+
+```{r load-data}
+# Load both datasets
+mat <- fread("student/student-mat.csv", sep = ";")
+por <- fread("student/student-por.csv", sep = ";")
+
+# Quick checks
+cat("Math dataset dimensions:", dim(mat), "\n")
+cat("Portuguese dataset dimensions:", dim(por), "\n")
+
+head(mat)
+head(por)
+```
+
+# Step 2: Combine the Datasets
+
+Our project is on Student Alcohol Consumption (and you want a full
+complete project), we should combine both datasets smartly.
+
+Important:
+
+The same student may appear in both mat and por datasets.
+
+UCI suggests matching students based on certain key columns (like
+school, sex, age, address, etc.).
+
+We'll need to avoid counting the same student twice.
+
+```{r}
+# Key columns to match students
+join_by_cols <- c("school", "sex", "age", "address", "famsize", "Pstatus", 
+                  "Medu", "Fedu", "Mjob", "Fjob", "reason", "guardian",
+                  "traveltime", "studytime", "failures", "schoolsup", "famsup", 
+                  "paid", "activities", "nursery", "higher", "internet", "romantic")
+
+# Perform an inner join
+students <- inner_join(mat, por, by = join_by_cols, suffix = c(".math", ".por"))
+```
+
+# Step 3: Exploratory Data Analysis (EDA)
+
+We'll break EDA into two parts:
+
+Understand dataset structure (dimensions, types, missing values)
+
+Visualize important patterns (alcohol consumption, grades, etc.)
+
+## Part 1: Quick Data Checks
+
+```{r}
+# Check dimensions
+dim(students)
+
+# See the first few rows
+head(students)
+
+# Check data types
+str(students)
+
+nrow(students)
+
+ncol(students)
+
+# Summary statistics
+summary(students)
+
+# Check missing values
+colSums(is.na(students))
+
+# check for duplicates
+sum(duplicated(students))
+```
+
+There are no missing data in the dataset.
+
+## Part 2: Understanding Data and Visualizations
+
+We’ll group variables into:
+
+Quantitative (Numeric) 
+Qualitative Ordinal (ordered categories)
+Qualitative Nominal 
+Qualitative Binary (Yes/No, F/M, etc.)
+
+```{r}
+quantitative_vars <- c("age", "absences.math", "G1.math", "G2.math", "G3.math",
+                       "traveltime", "studytime", "failures",
+                       "famrel.math", "freetime.math", "goout.math", "Dalc.math", "Walc.math", "health.math")
+
+ordinal_vars <- c("Medu", "Fedu")  
+binary_vars <- c("sex", "address", "famsize", "Pstatus", "schoolsup", "famsup", 
+                 "paid", "activities", "nursery", "higher", "internet", "romantic")
+
+nominal_vars <- c("school", "Mjob", "Fjob", "reason", "guardian")
+```
+
+#### Distribution of continuous variables (Quantitative)
+
+#### 
+
+```{r, fig.width=12, fig.height=10}
+library(ggplot2)
+library(tidyr)
+
+students %>%
+  select(all_of(quantitative_vars)) %>%
+  pivot_longer(cols = everything(), names_to = "variable", values_to = "value") %>%
+  ggplot(aes(x = value)) +
+  geom_histogram(fill = "steelblue", bins = 30) +
+  facet_wrap(~variable, scales = "free", ncol = 2) +
+  theme_minimal() +
+  labs(title = "Distribution of Continuous Variables", x = NULL, y = "Frequency")
+```
+
+#### Ordinal Variables Distribution
+
+#### 
+
+```{r, fig.width=12, fig.height=6}
+students %>%
+  select(all_of(ordinal_vars)) %>%
+  pivot_longer(cols = everything(), names_to = "variable", values_to = "value") %>%
+  ggplot(aes(x = as.factor(value))) +
+  geom_bar(fill = "darkorange") +
+  facet_wrap(~variable, scales = "free", ncol = 2) +
+  theme_minimal() +
+  labs(title = "Distribution of Ordinal Variables", x = NULL, y = "Count")
+
+```
+
+#### Nominal Variables Distribution
+
+#### 
+
+```{r, fig.width=12, fig.height=10}
+students %>%
+  select(all_of(nominal_vars)) %>%
+  pivot_longer(cols = everything(), names_to = "variable", values_to = "value") %>%
+  ggplot(aes(x = value)) +
+  geom_bar(fill = "mediumpurple") +
+  facet_wrap(~variable, scales = "free", ncol = 2) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "Distribution of Nominal Variables", x = NULL, y = "Count")
+
+```
+
+#### Binary Variables Distribution
+
+#### 
+
+```{r, fig.width=12, fig.height=10}
+students %>%
+  select(all_of(binary_vars)) %>%
+  pivot_longer(cols = everything(), names_to = "variable", values_to = "value") %>%
+  ggplot(aes(x = as.factor(value))) +
+  geom_bar(fill = "seagreen") +
+  facet_wrap(~variable, scales = "free", ncol = 2) +
+  theme_minimal() +
+  labs(title = "Distribution of Binary Variables", x = NULL, y = "Count")
+```
+
+## let's see Alcohol vs Math Grades
+
+```{r}
+students %>%
+  ggplot(aes(x = factor(Dalc.math), y = G3.math)) +
+  geom_boxplot(fill = "lightgreen") +
+  theme_minimal() +
+  labs(title = "Daily Alcohol Consumption vs Final Math Grade", x = "Dalc", y = "Final Grade (G3)")
+
+students %>%
+  ggplot(aes(x = factor(Walc.math), y = G3.math)) +
+  geom_boxplot(fill = "lightblue") +
+  theme_minimal() +
+  labs(title = "Weekend Alcohol Consumption vs Final Math Grade", x = "Walc", y = "Final Grade (G3)")
+
+```
+
+Observations:
+
+> -   Medu and Fedu have a balanced distribution, with the exception of
+>     parents with no education. In fact, they constitute only % of all
+>     parents
+>
+> -   More than half of the students take less than 15 minutes to reach
+>     school, 33% take 15 to 30 minutes, while the rest take more than
+>     30 minutes
+>
+> -   Almost half of the students (47%) study 2 to 5 hours a week, 37%
+>     less than 2 hours a week, the rest more than 5 hours a week Most
+>     of the students (85%) have never failed a course.
+>
+> -   The maximum number of failures in this group of students is 3
+>     (2.2%)
+>
+> -   Almost half of the students (49%) are happy with their family, 28%
+>     are very happy with their family, 16% quite good while the rest of
+>     the students do not.
+>
+> -   Freetime and goout have a normal distribution.
+>
+> -   Fortunately, alcohol consumption on weekdays is minimal.
+>
+> -   In fact, about 70% of students do not consume, or consume very
+>     little alcohol on weekdays
+>
+> -   On weekends, however, alcohol consumption increases, but the group
+>     of students who consume, or consume little alcohol, remains
+>     dominant.
+>
+> -   Almost 40% of students are in good health
+>
+> -   Mother's and father's work prevails "other"
+>
+> -   44% of students chose the school for the course of study, others
+>     because it was close to home (23%), for the reputation of the
+>     school (22%) and a minority for other reasons (11%)
+>
+> -   The majority of students (70%) are followed by the mother, 23.6%
+>     by the father and 6.3% other
+>
+> -   There are more females than males
+>
+> -   All the variables are unbalanced towards one value compared to the
+>     other, except the variable "activities"
+
+```{r, fig.width=15, fig.height=6}
+library(ggplot2)
+library(patchwork)
+
+p1 <- ggplot(students, aes(x = as.factor(Medu), y = G3.math)) +
+  geom_boxplot(fill = "lightblue") +
+  geom_jitter(width = 0.2, color = "darkgrey", alpha = 0.5) +
+  theme_minimal() +
+  labs(title = "Mother's Education (Medu) vs Final Grade (G3)", x = "Medu", y = "G3")
+
+p2 <- ggplot(students, aes(x = as.factor(studytime), y = G3.math)) +
+  geom_boxplot(fill = "lightgreen") +
+  geom_jitter(width = 0.2, color = "darkgrey", alpha = 0.5) +
+  theme_minimal() +
+  labs(title = "Weekly Study Time vs Final Grade (G3)", x = "Studytime", y = "G3")
+
+p3 <- ggplot(students, aes(x = as.factor(failures), y = G3.math)) +
+  geom_boxplot(fill = "salmon") +
+  geom_jitter(width = 0.2, color = "darkgrey", alpha = 0.5) +
+  theme_minimal() +
+  labs(title = "Number of Failures vs Final Grade (G3)", x = "Failures", y = "G3")
+
+(p1 | p2 | p3)
+```
+
+> After examining the correlation matrix, we observed that three
+> variables showed significant association with the final grade (G3):\
+>
+> \- **Mother's education level (Medu)** and **weekly study time
+> (studytime)** exhibited a **positive relationship** with G3: higher
+> values corresponded to higher median grades.\
+>
+> \- **Number of failures** exhibited a **negative relationship**: more
+> past failures corresponded to lower final grades.
+>
+> These relationships were visualized using boxplots combined with
+> jittered data points to capture the distribution of individual
+> students’ scores.
+
+
+## Step 3: Correlation Heatmap Code
+
+Correlation heatmaps are very important for understanding relationships
+between numeric variables
+
+```{r}
+# Load correlation library
+library(corrplot)
+
+# Select only numeric columns
+students_numeric <- students %>% select(where(is.numeric))
+
+# Calculate correlation matrix
+cor_matrix <- cor(students_numeric)
+
+# Plot the correlation heatmap
+corrplot(cor_matrix, method = "color", type = "upper", tl.cex = 0.7, number.cex = 0.7)
+```
+
+##### This will show:
+
+Blue = Strong positive correlation Red = Strong negative correlation
+Closer to white = Weak or no correlation
+
+## Step 4: Data Preprocessing
+
+Before we can train any machine learning models, we must clean and
+prepare the data:
+
+We need to:
+
+Encode categorical variables into numbers Scale/normalize numeric
+variables Create datasets for regression and classification separately
+
+```{r}
+# 1. Encode all character columns into factors, then into numbers
+students_encoded <- students %>%
+  mutate(across(where(is.character), as.factor)) %>%
+  mutate(across(where(is.factor), as.numeric))
+
+# 2. Normalize numeric features
+library(caret)
+
+preproc <- preProcess(students_encoded, method = c("center", "scale"))
+students_scaled <- predict(preproc, students_encoded)
+
+# 3. For Regression
+# Target variable: Final grade (G3.math)
+
+regression_data <- students_scaled
+
+# 4. For Classification
+# Let's categorize G3 into Low, Medium, High
+classification_data <- students_scaled %>%
+  mutate(G3_category = case_when(
+    G3.math <= 10 ~ "Low",
+    G3.math <= 15 ~ "Medium",
+    TRUE ~ "High"
+  )) %>%
+  select(-G3.math)  # Remove the numeric grade, keep only categories
+
+classification_data$G3_category <- as.factor(classification_data$G3_category)
+```
+
+## Step 5: Modeling — Regression
+
+First, let’s predict the final grade (G3.math) as a numeric value. We'll
+apply multiple models and compare results:
+
+Models we’ll do:
+
+Linear Regression Random Forest Regression Support Vector Machine
+Regression (SVM) XGBoost Regression
+
+### 5.1 Train-Test Split
+
+```{r}
+set.seed(123)
+
+# Split data 80% train, 20% test
+train_idx <- createDataPartition(regression_data$G3.math, p = 0.8, list = FALSE)
+train_data <- regression_data[train_idx, ]
+test_data <- regression_data[-train_idx, ]
+```
+
+### 5.2 Linear Regression
+
+```{r}
+# Linear Regression
+lm_model <- train(G3.math ~ ., data = train_data, method = "lm")
+
+# Predictions
+lm_preds <- predict(lm_model, newdata = test_data)
+
+# Evaluation
+postResample(lm_preds, test_data$G3.math)
+```
+
+### 5.3 Random Forest Regression
+
+```{r}
+# Random Forest Regression
+rf_model <- randomForest(G3.math ~ ., data = train_data, ntree = 100)
+
+# Predictions
+rf_preds <- predict(rf_model, newdata = test_data)
+
+# Evaluation
+postResample(rf_preds, test_data$G3.math)
+
+# Feature importance plot
+# Extract variable importance as a data frame
+rf_importance <- importance(rf_model)
+importance_df <- data.frame(Feature = rownames(rf_importance), Importance = rf_importance[, "IncNodePurity"])
+
+# Sort by importance
+importance_df <- importance_df %>%
+  arrange(desc(Importance))
+
+# Plot using ggplot2
+library(ggplot2)
+
+ggplot(importance_df, aes(x = reorder(Feature, Importance), y = Importance)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  theme_minimal() +
+  labs(title = "Random Forest Feature Importance", x = "Feature", y = "IncNodePurity")
+
+```
+
+### 5.4 SVM Regression
+
+```{r}
+# SVM Regression
+svm_model <- train(G3.math ~ ., data = train_data, method = "svmRadial")
+
+# Predictions
+svm_preds <- predict(svm_model, newdata = test_data)
+
+# Evaluation
+postResample(svm_preds, test_data$G3.math)
+```
+
+### 5.5 XGBoost Regression
+
+```{r}
+# Prepare data for xgboost
+library(xgboost)
+
+xgb_train <- xgb.DMatrix(data = as.matrix(train_data %>% select(-G3.math)), label = train_data$G3.math)
+xgb_test <- xgb.DMatrix(data = as.matrix(test_data %>% select(-G3.math)), label = test_data$G3.math)
+
+# Train XGBoost
+xgb_model <- xgboost(data = xgb_train, objective = "reg:squarederror", nrounds = 100, verbose = 0)
+
+# Predictions
+xgb_preds <- predict(xgb_model, xgb_test)
+
+# Evaluation
+postResample(xgb_preds, test_data$G3.math)
+```
+
+## 5.6 Model Comparison
+
+```{r}
+# Create comparison table
+model_results <- tibble(
+  Model = c("Linear Regression", "Random Forest", "SVM", "XGBoost"),
+  RMSE = c(
+    postResample(lm_preds, test_data$G3.math)[["RMSE"]],
+    postResample(rf_preds, test_data$G3.math)[["RMSE"]],
+    postResample(svm_preds, test_data$G3.math)[["RMSE"]],
+    postResample(xgb_preds, test_data$G3.math)[["RMSE"]]
+  ),
+  Rsquared = c(
+    postResample(lm_preds, test_data$G3.math)[["Rsquared"]],
+    postResample(rf_preds, test_data$G3.math)[["Rsquared"]],
+    postResample(svm_preds, test_data$G3.math)[["Rsquared"]],
+    postResample(xgb_preds, test_data$G3.math)[["Rsquared"]]
+  )
+)
+
+print(model_results)
+```
+
+```{r}
+# Plot RMSE Comparison
+library(ggplot2)
+
+# RMSE plot
+ggplot(model_results, aes(x = reorder(Model, RMSE), y = RMSE)) +
+  geom_col(fill = "tomato", width = 0.5) +
+  coord_flip() +
+  theme_minimal(base_size = 12) +
+  labs(title = "Regression Model Comparison - RMSE", x = "Model", y = "RMSE")
+```
+
+```{r}
+# Plot R^² Comparison
+# R-squared plot
+ggplot(model_results, aes(x = reorder(Model, Rsquared), y = Rsquared)) +
+  geom_col(fill = "steelblue", width = 0.5) +
+  coord_flip() +
+  theme_minimal(base_size = 12) +
+  labs(title = "Regression Model Comparison - R²", x = "Model", y = "R²")
+```
+
+#### Observation:
+
+We evaluated four regression models to predict students’ final math
+grades (G3.math). Among them, Random Forest achieved the lowest RMSE
+(0.284) and the highest R² (0.89), indicating it captured the underlying
+patterns in the data most effectively. XGBoost followed closely with an
+RMSE of 0.314 and R² of 0.881, showing strong performance. Linear
+Regression performed reasonably well, but was outperformed by ensemble
+methods. SVM showed the highest RMSE (0.393) and lowest R² (0.797),
+suggesting it was less effective for this dataset.
+
+## Step 6: Classification Modeling
+
+### Step 1: Train/Test Split
+
+```{r}
+# Go back to the original `students` dataset
+classification_data <- students %>%
+  mutate(G3_category = case_when(
+    G3.math <= 10 ~ "Low",
+    G3.math <= 15 ~ "Medium",
+    TRUE ~ "High"
+  )) %>%
+  select(-G3.math)
+
+# Ensure it's a factor
+classification_data$G3_category <- factor(classification_data$G3_category, levels = c("Low", "Medium", "High"))
+
+# Check distribution
+table(classification_data$G3_category)
+
+library(caret)
+
+# Drop G3.math before scaling
+classification_features <- students %>%
+  select(-G3.math) %>%
+  mutate(across(where(is.character), as.factor)) %>%
+  mutate(across(where(is.factor), as.numeric))
+
+# Scale features
+preproc_class <- preProcess(classification_features, method = c("center", "scale"))
+classification_scaled <- predict(preproc_class, classification_features)
+
+# Add G3_category back
+classification_data <- classification_scaled %>%
+  mutate(G3_category = classification_data$G3_category)
+
+set.seed(123)
+train_idx_class <- createDataPartition(classification_data$G3_category, p = 0.8, list = FALSE)
+train_class <- classification_data[train_idx_class, ]
+test_class <- classification_data[-train_idx_class, ]
+
+table(train_class$G3_category)
+table(test_class$G3_category)
+
+```
+
+### Step 2: Random Forest Classifier
+
+```{r}
+library(caret)
+str(train_class$G3_category)
+table(train_class$G3_category)
+train_class$G3_category <- as.factor(train_class$G3_category)
+test_class$G3_category <- as.factor(test_class$G3_category)
+levels(train_class$G3_category)
+
+rf_class <- train(G3_category ~ ., data = train_class, method = "rf")
+rf_class_preds <- predict(rf_class, newdata = test_class)
+
+confusionMatrix(rf_class_preds, test_class$G3_category)
+```
+
+### Step 3: SVM Classifier
+
+```{r}
+svm_class <- train(G3_category ~ ., data = train_class, method = "svmRadial")
+svm_class_preds <- predict(svm_class, newdata = test_class)
+
+confusionMatrix(svm_class_preds, test_class$G3_category)
+```
+
+### Step 4: XGBoost Classifier
+
+```{r}
+# Convert to matrix and numeric label
+xgb_train_class <- xgb.DMatrix(data = as.matrix(train_class %>% select(-G3_category)),
+                               label = as.numeric(train_class$G3_category) - 1)
+
+xgb_test_class <- xgb.DMatrix(data = as.matrix(test_class %>% select(-G3_category)),
+                              label = as.numeric(test_class$G3_category) - 1)
+
+xgb_model_class <- xgboost(data = xgb_train_class, objective = "multi:softmax",
+                           num_class = 3, nrounds = 100, verbose = 0)
+
+xgb_preds_class <- predict(xgb_model_class, xgb_test_class)
+xgb_preds_class <- factor(xgb_preds_class, levels = 0:2, labels = levels(test_class$G3_category))
+
+confusionMatrix(xgb_preds_class, test_class$G3_category)
+```
+
+## Step 7: comparision
+
+### Step 1: Collect metrics from each model
+
+```{r}
+# Random Forest
+rf_conf <- confusionMatrix(rf_class_preds, test_class$G3_category)
+
+# SVM
+svm_conf <- confusionMatrix(svm_class_preds, test_class$G3_category)
+
+# XGBoost
+xgb_conf <- confusionMatrix(xgb_preds_class, test_class$G3_category)
+
+# Build summary table
+model_metrics <- tibble(
+  Model = c("Random Forest", "SVM", "XGBoost"),
+  Accuracy = c(rf_conf$overall["Accuracy"],
+               svm_conf$overall["Accuracy"],
+               xgb_conf$overall["Accuracy"]),
+  F1 = c(mean(rf_conf$byClass[, "F1"]),
+         mean(svm_conf$byClass[, "F1"]),
+         mean(xgb_conf$byClass[, "F1"])),
+  Sensitivity = c(mean(rf_conf$byClass[, "Sensitivity"]),
+                  mean(svm_conf$byClass[, "Sensitivity"]),
+                  mean(xgb_conf$byClass[, "Sensitivity"])),
+  Specificity = c(mean(rf_conf$byClass[, "Specificity"]),
+                  mean(svm_conf$byClass[, "Specificity"]),
+                  mean(xgb_conf$byClass[, "Specificity"]))
+)
+
+print(model_metrics)
+```
+
+### Step 2: Plot comparison charts
+
+Accuracy
+
+```{r}
+ggplot(model_metrics, aes(x = reorder(Model, Accuracy), y = Accuracy)) +
+  geom_col(fill = "steelblue", width = 0.5) +
+  coord_flip() +
+  theme_minimal() +
+  labs(title = "Classification Model Comparison – Accuracy", x = "Model", y = "Accuracy")
+```
+
+F1 Score
+
+```{r}
+ggplot(model_metrics, aes(x = reorder(Model, F1), y = F1)) +
+  geom_col(fill = "tomato", width = 0.5) +
+  coord_flip() +
+  theme_minimal() +
+  labs(title = "Classification Model Comparison – F1 Score", x = "Model", y = "F1 Score")
+```
+
+Sensitivity
+
+```{r}
+ggplot(model_metrics, aes(x = reorder(Model, Sensitivity), y = Sensitivity)) +
+  geom_col(fill = "forestgreen", width = 0.5) +
+  coord_flip() +
+  theme_minimal() +
+  labs(title = "Classification Model Comparison – Sensitivity", x = "Model", y = "Sensitivity")
+```
+
+## Summary:
+
+We compared three classification models — Random Forest, SVM, and
+XGBoost — in predicting student academic performance categories (Low,
+Medium, High). Random Forest achieved the highest accuracy (81.2%) and
+maintained strong F1 and sensitivity scores across classes. XGBoost
+slightly outperformed Random Forest in F1 Score (0.751) and Sensitivity
+(0.74), indicating stronger performance in correctly identifying class
+labels. SVM, while functional, showed relatively lower performance in
+all metrics, with an accuracy of 68.8%. These results highlight the
+strength of ensemble models (Random Forest and XGBoost) for multi-class
+prediction problems in educational data.
