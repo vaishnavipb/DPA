@@ -1,6 +1,6 @@
 ---
 title: "Project"
-author: "Vaishnavi Papudesi Babu"
+author: "Charan Reddy Kandula Venkata, Sona Shree Reddy Gutha, Vaishnavi Papudesi Babu "
 date: "2025-04-23"
 output: pdf_document
 editor_options: 
